@@ -1,0 +1,68 @@
+
+Issues to be resolved:
+======================
+
+1.  How are external js/css libraries (i.e. jquery, bootstrap, etc.) going to be
+    handled?
+
+    -   bower ?
+    -   copy from some common location (i.e. ~/.page/lib/) where users put
+        downloaded copies of libraries?  We could provide some code (for each
+        library) that searches the downloads to find the required bits and copy
+        it to the project. Alternatively we could provide a means for the user to
+        specify the location of files that need to be copies (i.e in the
+        ~./pagerc file).
+
+2. Is composer require/optional?
+
+    - Don't think I have a user for it at the moment.
+	
+3. Default project:
+
+    - Include (and/or base on) the following:
+        - jquery
+        - bootstrap
+        - underscore
+        - html5 boilerplate
+    - Add a command (page upate-libs ?) to load all the dependencies into
+      a standard location. (I leaning toward $HOME/.page/lib.) If required,
+      we could customize the location using something like a $HOME/.pagerc
+      file (see item 4 below).
+      
+4. '.pagerc' file: 
+
+    - Include support for a user ($HOME/.pagerc) and project (<project>/.pagerc)
+      configuration file.  It could be sourced or parsed depending on security 
+      concerns.
+    - We could also use environment variable to modify some things.  For instance
+      we could use PAGE_JQUERY to locate the jquery to copy into the project.
+    
+5.  Project Templates:
+
+    - With the changes to the default project identified in item 3 above, we
+      are left with the following projects (for now):
+          
+          1. default 
+          2. backbone (perhaps we should leave this till later)
+
+6.  Bootstrap Considerations:
+
+    - I would realy like to use a jade/haml like syntax for the bootstrap
+      stuff.  Things get so busy with straight html.  Mostly I would like the
+      id/class and default div support.
+      
+    - I suppose I could add an optinal dependency on node/jade or one
+      of the haml/jade PHP libraries (MtHaml?)
+      
+7.  Logging support:
+
+    - Add support for logging.
+    
+8.  Server Control:
+
+    -   Start server in background and keep track of pid.
+
+    -   Add 'stop' command that stops the server running in background.
+    
+    -   Perhaps an 'info' command that tells you if server is running, along with
+        some other stuff.

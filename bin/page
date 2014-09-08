@@ -1,0 +1,1151 @@
+#!/usr/bin/env bash
+
+PTYPE='default'  # Default project type.
+LIBROOT=$HOME/.page/lib
+
+# 
+# Templates
+#
+declare -a TMPLNAME
+declare -A TMPLDESC
+declare -A TMPLFUNC
+declare -A TMPLDATA  # optional template data 
+
+function page_print_templates {
+  
+  # TODO: Need to fix the length of the template ID and description fields!!
+  
+  #
+  # List available templates.
+  #
+  printf -- "\nAvailable templates:\n"
+  for i in "${!PAGETEMPLATES[@]}"
+  do
+    # echo "    key  : $i"
+    # echo "    value: ${PAGETEMPLATES[$i]}"
+    printf --  "    $i - ${PAGEDESC[$i]}\n"
+  done
+  printf -- "\n"
+}
+
+function page_usage {
+
+    cat <<'USAGE'
+
+Create html page from template.
+
+Usage:
+
+  page [command] [command parameters] [options]
+
+Commands:
+
+  new <name>   - Create new project (use -t option to select type)
+  add <name>   - Create an page (use -t option to select template)
+  part <name>  - Create an html partial (use -t option to select template)
+  class <name> - Create a php class (and test class).
+  model <name> - Create a php DAO object.
+  server       - Start web server (use -r option to enable router.php usage.)  
+  test         - Run php unit tests.
+
+Options:
+
+  -t    Specify name of template/type to use.
+  -h    Display this message and exit.
+  -r    Causes router.php to be used with server command.
+
+USAGE
+    
+}
+
+# src/utils.sh
+
+function page_options {
+  # Process options
+  #
+  
+  # We have to remove any leading non-option arguments in order
+  # for getopts to work properly.
+  while [[ $# -gt 0 &&  ! $1 =~ ^[[:blank:]]*\-+ ]]; do
+    shift
+  done
+  
+  while getopts "ht:r" opts; do
+      case $opts in 
+      	h)  POPTHELP=1 ;;
+        t)  POPTTMPL=$OPTARG ;;
+        r)  POPTROUTER=1 ;;
+      esac
+  done
+  
+  # printf -- "POPTHELP: ${POPTHELP}\n"
+  # printf -- "POPTTMPL: ${POPTTMPL}\n"
+  # printf -- "POPTROUTER: ${POPTROUTER}\n"
+
+}
+
+function page_utils_check_path {
+  local cur_path="$(pwd)"
+  if [[ ! -e $cur_path/.page ]]; then
+    echo "ERROR: Must be in project top level directory to run command!"
+    exit 0;
+  fi
+  PAGE_PROJECT_PATH=$cur_path
+}
+
+#=============================================================================
+#
+# Template handling
+#
+#=============================================================================
+
+function template_list {
+  local type=$1
+  printf -- "  Available Templates:\n\n"
+  for name in ${TMPLNAME[*]}; do
+    if [[ ${name} =~ ^${type}. ]]; then
+      printf -- "    %-10s - %-50s\n" "${name#${type}.}" "${TMPLDESC[$name]}"
+    fi
+  done
+  printf -- "\n"
+}
+
+function generate {
+  local tmpl_id=$1    # type.name format
+  local dst=$2        # destination path
+  ${TMPLFUNC[$tmpl_id]} $dst
+}
+
+#=============================================================================
+#
+# Project utilites
+#
+#=============================================================================
+
+function utils_project_common {
+  
+  local PAGE_PATH=$1
+    
+  # Create project directory.
+
+  printf -- "\nCreating project ${PAGE_PATH}...\n\n"
+  mkdir ${PAGE_PATH}
+  cd ${PAGE_PATH}
+  PAGE_PROJECT_HOME="$(pwd)"
+
+  # Create project sub-directories
+
+  mkdir src
+  mkdir test
+  mkdir part
+  mkdir -p pub/lib 
+  mkdir -p pub/js
+  mkdir -p pub/css
+  mkdir -p pub/img
+}
+
+#=============================================================================
+#
+# Router generator
+#
+#=============================================================================
+
+function router_php {
+    
+    ROUTER_PATH=$1; shift
+
+    printf -- "    Creating $ROUTER_PATH.\n"
+    
+    cat > ${ROUTER_PATH}<<ROUTER
+<?php
+// router.php
+if (preg_match('/\.(?:png|jpg|jpeg|gif)\$/', \$_SERVER["REQUEST_URI"]) || \$_SERVER["REQUEST_URI"] == '/') {
+    return false;    // serve the requested resource as-is.
+} else { 
+    echo "<p>Welcome to PHP</p>";
+}
+?>
+ROUTER
+
+}
+
+#=============================================================================
+#
+# PHP lib
+#
+#=============================================================================
+
+function utils_php_lib {
+
+    
+    PHPLIB_PATH=$1; shift
+
+    printf -- "    Creating $PHPLIB_PATH.\n"
+    
+    cat > ${PHPLIB_PATH}<<PHPLIB
+<?php
+function part(\$name) {
+    include '../part/' . \$name . '.php';
+}
+PHPLIB
+
+}
+
+
+#=============================================================================
+#
+# die
+#
+#   Exit with error message.
+#
+#=============================================================================
+function die {
+  local msg=$1
+  printf -- "ERROR: $msg\n"
+  exit 1
+}
+
+
+
+
+# page/src/resource.sh
+
+# Definitions:
+#   src - file path relative to ~/.page/resources/  (i.e. "jquery/jquery.js").
+#   dst - file path relative to project root (i.e. "pub/js/jquery.js").
+#   ResuourceID - string identifiying resource (i.e. "jquery").
+#
+declare -A RESDST # Key: src ; Value: project dst path for resource.
+declare -A RESLST  # Key: ResourceID; Value: list of src's seperated by ':'.
+
+# Default Resources
+src='jquery/jquery.js'
+RESLST['jquery']="$src"
+RESDST["$src"]='pub/lib/jquery.js'
+
+src='underscore.js'
+RESLST['underscore']="$src"
+RESDST["$src"]='pub/lib/underscore.js'
+
+src='favicon.ico'
+RESLST['favicon']="$src"
+RESDST["$src"]='pub/favicon.ico'
+
+src_css='bootstrap/css/bootstrap.css'
+src_map='bootstrap/css/bootstrap.css.map'
+RESLST['bootstrap']="${src_css}":"${src_map}"
+RESDST["$src_map"]='pub/lib/bootstrap.css.map'
+RESDST["$src_css"]='pub/lib/bootstrap.css'
+
+
+#=============================================================================
+#
+# resource <id>
+#
+#   Install the resource specified by the ID (i.e. 'jquery').
+#   Note: The src and dst directories are currently fixed.
+#
+#=============================================================================
+
+function resource {
+  local resID=$1
+  if [[ ! ${RESLST[$resID]} ]]; then
+   die "Bad resource ID: $resID"
+  fi 
+  local src=${RESLST[$resID]} 
+  IFS=':' read -ra RES <<< "$src"
+  for i in "${RES[@]}"; do
+    if [[ ! ${RESDST[$i]} ]]; then
+     die "Bad resource source [\'$i\']!"
+    fi 
+    local dst=${RESDST[$i]}
+    local root=~/.page/resources
+    if [[ $root/$i ]]; then
+      cp $root/$i $dst
+    fi
+    
+  done
+  
+
+}
+# src/projects/new.default.sh
+
+TMPLNAME+=('new.default')
+TMPLDESC['new.default']="Default project template."
+TMPLFUNC['new.default']=page_new_default
+
+function page_new_default {
+  
+  #1. Project layout:
+  local PAGE_PATH=$PNAME
+  utils_project_common "$PAGE_PATH"
+    
+  #2. Generate files from templates
+  unset TMPLDATA; declare -A TMPLDATA=( [part]='hello' )
+  generate page.index pub/index.php
+  generate part.hello part/hello.php
+  generate autoload src/autoload.php
+  generate composer composer.json
+  touch pub/js/${PAGE_PATH}.js
+  touch pub/css/${PAGE_PATH}.css
+  
+  #3. Support files.
+  router_php router.php
+  utils_php_lib src/pagelib.php
+  
+  #4. CSS/JS Libraries
+  #lib_install
+  resource jquery
+  resource underscore
+  resource favicon
+  resource bootstrap
+  
+  #5. Project PHP files (if any).
+  
+
+  printf -- "\n...done\n\n"    
+}
+
+
+
+
+
+
+
+# src/projects/new.list.sh
+
+TMPLNAME+=('new.list')
+TMPLDESC['new.list']="Simple list project template."
+TMPLFUNC['new.list']=page_new_list
+
+function page_new_list {
+  
+  #1. Project layout:
+  local PAGE_PATH=$PNAME
+  utils_project_common "$PAGE_PATH"
+  
+  #2. Generate files from templates
+  unset TMPLDATA; declare -A TMPLDATA=( [part]='form' )
+  generate page.index pub/index.php
+  generate part.form part/form.php
+  generate autoload src/autoload.php
+  generate composer composer.json
+  touch pub/js/${PAGE_PATH}.js
+  touch pub/css/${PAGE_PATH}.css
+  
+  #3. Support files.
+  utils_php_lib src/pagelib.php
+  router_php router.php
+  
+  #4. CSS/JS Libraries
+  resource jquery
+  resource underscore
+  resource favicon
+  resource bootstrap
+    
+  #5. Project PHP files (if any).
+
+  printf -- "\n...done\n\n"    
+}
+
+# src/projects/new.sink.sh
+
+TMPLNAME+=('new.sink')
+TMPLDESC['new.sink']="Kitchen-Sink project template."
+TMPLFUNC['new.sink']=page_new_sink
+
+function page_new_sink {
+  
+  #1. Project layout:
+  local PAGE_PATH=$PNAME
+  utils_project_common "$PAGE_PATH"
+    
+  #2. Generate files from templates
+  unset TMPLDATA; declare -A TMPLDATA=( [part]='hello' )
+  generate page.index pub/index.php
+  generate part.hello part/hello.php
+  generate autoload src/autoload.php
+  generate composer composer.json
+  touch pub/js/${PAGE_PATH}.js
+  touch pub/css/${PAGE_PATH}.css
+  
+  #3. Support files.
+  router_php router.php
+  utils_php_lib src/pagelib.php
+  
+  #4. CSS/JS Libraries
+  resource jquery
+  resource underscore
+  resource favicon
+  resource bootstrap
+    
+  #5. Project PHP files (if any).
+  
+
+  printf -- "\n...done\n\n"    
+}
+
+
+
+
+
+
+
+# src/templates/autoload.sh
+
+TMPLNAME+=('autoload')
+TMPLDESC['autoload']="Basic autoload.php file."
+TMPLFUNC['autoload']=templates_page_autoload
+
+function templates_page_autoload {
+  
+  local dst=$1
+
+  printf -- "    Creating ${dst}.\n"
+    
+  cat > ${dst}<<AUTOLOAD
+
+<?php
+function page_autoloader(\$class) {
+    include  __DIR__ . '/' . \$class . '.php';
+}
+spl_autoload_register('page_autoloader');
+
+AUTOLOAD
+
+}
+
+# src/templates/class.default.sh
+
+TMPLNAME+=('class.default')
+TMPLDESC['class.default']="Basic PHP Class."
+TMPLFUNC['class.default']=templates_class_default
+
+function templates_class_default {
+  
+  local dst=$1
+
+  printf -- "    Creating ${dst}.\n"
+    
+  cat > ${dst}<<CLASS
+  <?php  
+
+  class ${TMPLDATA['class_name']}  {  
+
+      public \$prop1 = "I'm a class property!";  
+
+      public function __construct()  
+      {  
+          echo 'The class "', __CLASS__, '" was initiated!<br />';  
+      }  
+  }  
+
+  ?>  
+CLASS
+}
+
+# src/templates/composer.json.sh
+
+TMPLNAME+=('composer')
+TMPLDESC['composer']="Basic compolser.json file."
+TMPLFUNC['composer']=templates_page_composer
+
+function templates_page_composer {
+  
+  local dst=$1
+
+  printf -- "    Creating ${dst}.\n"
+    
+  cat > ${dst}<<COMPOSER
+
+{
+    "name": "tbd",
+    "description": "TBD",
+    "require": {
+    },
+    "require-dev": {
+    },
+    "autoload": {
+        "psr-4": { "": "src"}
+    },
+    "authors": [
+        {
+            "name": "me",
+            "email": "me@foo.com"
+        }
+    ],
+    "comments": {
+      "Add dependency": "composer require vendor/package:ver",
+      "Add dev dependency": "composer require vendor/silex:ver --dev",
+      "Add latest silex": "composer require silex/silex:1.1.*"
+    }
+}
+
+COMPOSER
+
+}
+
+# src/templates/model.default.sh
+
+TMPLNAME+=('model.default')
+TMPLDESC['model.default']="Basic PHP DAO Class."
+TMPLFUNC['model.default']=templates_model_default
+
+function templates_model_default {
+  
+  local dst=$1
+
+  printf -- "    Creating ${dst}.\n"
+    
+  cat > ${dst}<<MODEL
+  <?php  
+
+  class ${TMPLDATA['model_name']}DAO  {  
+
+      public \$prop1 = "I'm a class property!";  
+
+      public function __construct()  
+      {  
+          echo 'The class "', __CLASS__, '" was initiated!<br />';  
+      }  
+  }  
+
+  ?>  
+MODEL
+}
+
+# src/templates/page.index.sh
+
+TMPLNAME+=('page.index')
+TMPLDESC['page.index']="Basic index.html page."
+TMPLFUNC['page.index']=templates_page_index
+
+function templates_page_index {
+  
+  local dst=$1
+
+  printf -- "    Creating ${dst}.\n"
+    
+  cat > ${dst}<<INDEX
+<?php 
+include '../src/autoload.php'; 
+include '../src/pagelib.php';
+?>
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${TMPLDATA['title']}</title>
+    <link href="lib/bootstrap.css" rel="stylesheet">
+    <link href="css/${PNAME}.css" rel="stylesheet">
+
+    <!-- HTML5 Shim and Respond.js IE8 support of HTML5 elements and media queries -->
+    <!-- WARNING: Respond.js doesn't work if you view the page via file:// -->
+    <!--[if lt IE 9]>
+      <script src="https://oss.maxcdn.com/libs/html5shiv/3.7.0/html5shiv.js"></script>
+      <script src="https://oss.maxcdn.com/libs/respond.js/1.4.2/respond.min.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <?php part('${TMPLDATA['part']}'); ?>
+    <script type="text/javascript" charset="utf-8" src="lib/jquery.js"></script>
+    <script type="text/javascript" charset="utf-8" src="lib/underscore.js"></script>
+    <script type="text/javascript" charset="utf-8" src="js/${PNAME}.js"></script>
+  </body>
+</html>
+
+INDEX
+
+}
+# src/templates/part.form.sh
+
+TMPLNAME+=('part.dropdown')
+TMPLDESC['part.dropdown']="Bootstrap dropdown partial."
+TMPLFUNC['part.dropdown']=templates_part_dropdown
+
+function templates_part_dropdown {
+  
+  local dst=$1
+
+  printf -- "    Creating ${dst}.\n"
+    
+  cat > ${dst}<<FORM
+
+<div class="dropdown">
+  <button class="btn dropdown-toggle sr-only" type="button" id="dropdownMenu1" data-toggle="dropdown">
+    Dropdown
+    <span class="caret"></span>
+  </button>
+  <ul class="dropdown-menu" role="menu" aria-labelledby="dropdownMenu1">
+    <li role="presentation"><a role="menuitem" tabindex="-1" href="#">Action</a></li>
+    <li role="presentation"><a role="menuitem" tabindex="-1" href="#">Another action</a></li>
+    <li role="presentation"><a role="menuitem" tabindex="-1" href="#">Something else here</a></li>
+    <li role="presentation" class="divider"></li>
+    <li role="presentation"><a role="menuitem" tabindex="-1" href="#">Separated link</a></li>
+  </ul>
+</div>
+  
+FORM
+
+}
+
+# src/templates/part.form.sh
+
+TMPLNAME+=('part.form')
+TMPLDESC['part.form']="Basic form partial."
+TMPLFUNC['part.form']=templates_part_form
+
+function templates_part_form {
+  
+  local dst=$1
+
+  printf -- "    Creating ${dst}.\n"
+    
+  cat > ${dst}<<FORM
+
+<form class="form-horizontal" role="form">
+  <div class="form-group">
+    <label for="inputEmail3" class="col-sm-2 control-label">Email</label>
+    <div class="col-sm-10">
+      <input type="email" class="form-control" id="inputEmail3" placeholder="Email">
+    </div>
+  </div>
+  <div class="form-group">
+    <label for="inputPassword3" class="col-sm-2 control-label">Password</label>
+    <div class="col-sm-10">
+      <input type="password" class="form-control" id="inputPassword3" placeholder="Password">
+    </div>
+  </div>
+  <div class="form-group">
+    <div class="col-sm-offset-2 col-sm-10">
+      <div class="checkbox">
+        <label>
+          <input type="checkbox"> Remember me
+        </label>
+      </div>
+    </div>
+  </div>
+  <div class="form-group">
+    <div class="col-sm-offset-2 col-sm-10">
+      <button type="submit" class="btn btn-default">Sign in</button>
+    </div>
+  </div>
+</form>
+
+FORM
+
+}
+
+
+# src/templates/part.hello.sh
+
+TMPLNAME+=('part.hello')
+TMPLDESC['part.hello']="Basic partial."
+TMPLFUNC['part.hello']=templates_part_hello
+
+function templates_part_hello {
+  
+  local dst=$1
+
+  printf -- "    Creating ${dst}.\n"
+    
+  cat > ${dst}<<PART
+<h1>Hello from page!</h1>
+PART
+}
+# src/templates/part.form.sh
+
+TMPLNAME+=('part.navbar')
+TMPLDESC['part.navbar']="Bootstrap navbar partial."
+TMPLFUNC['part.navbar']=templates_part_navbar
+
+function templates_part_navbar {
+  
+  local dst=$1
+
+  printf -- "    Creating ${dst}.\n"
+    
+  cat > ${dst}<<NAVBAR
+
+<nav class="navbar navbar-default" role="navigation">
+  <div class="container-fluid">
+    <!-- Brand and toggle get grouped for better mobile display -->
+    <div class="navbar-header">
+      <button type="button" class="navbar-toggle" data-toggle="collapse" data-target="#bs-example-navbar-collapse-1">
+        <span class="sr-only">Toggle navigation</span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+      </button>
+      <a class="navbar-brand" href="#">Brand</a>
+    </div>
+
+    <!-- Collect the nav links, forms, and other content for toggling -->
+    <div class="collapse navbar-collapse" id="bs-example-navbar-collapse-1">
+      <ul class="nav navbar-nav">
+        <li class="active"><a href="#">Link</a></li>
+        <li><a href="#">Link</a></li>
+        <li class="dropdown">
+          <a href="#" class="dropdown-toggle" data-toggle="dropdown">Dropdown <b class="caret"></b></a>
+          <ul class="dropdown-menu">
+            <li><a href="#">Action</a></li>
+            <li><a href="#">Another action</a></li>
+            <li><a href="#">Something else here</a></li>
+            <li class="divider"></li>
+            <li><a href="#">Separated link</a></li>
+            <li class="divider"></li>
+            <li><a href="#">One more separated link</a></li>
+          </ul>
+        </li>
+      </ul>
+      <form class="navbar-form navbar-left" role="search">
+        <div class="form-group">
+          <input type="text" class="form-control" placeholder="Search">
+        </div>
+        <button type="submit" class="btn btn-default">Submit</button>
+      </form>
+      <ul class="nav navbar-nav navbar-right">
+        <li><a href="#">Link</a></li>
+        <li class="dropdown">
+          <a href="#" class="dropdown-toggle" data-toggle="dropdown">Dropdown <b class="caret"></b></a>
+          <ul class="dropdown-menu">
+            <li><a href="#">Action</a></li>
+            <li><a href="#">Another action</a></li>
+            <li><a href="#">Something else here</a></li>
+            <li class="divider"></li>
+            <li><a href="#">Separated link</a></li>
+          </ul>
+        </li>
+      </ul>
+    </div><!-- /.navbar-collapse -->
+  </div><!-- /.container-fluid -->
+</nav>
+
+NAVBAR
+
+}
+
+# src/templates/test.default.sh
+
+TMPLNAME+=('test.default')
+TMPLDESC['test.default']="Basic PHP Test Class."
+TMPLFUNC['test.default']=templates_test_default
+
+function templates_test_default {
+  
+  local dst=$1
+
+  printf -- "    Creating ${dst}.\n"
+    
+  cat > ${dst}<<CLASS
+<?php  
+
+class ${TMPLDATA['class_name']}Test  extends PHPUnit_Framework_TestCase {  
+
+
+  public function testCanBeNegated()
+  {
+      // Arrange
+      \$cut = new ${TMPLDATA['class_name']}();
+
+      // Assert
+      \$this->assertEquals(1, 1);
+  } 
+}  
+
+CLASS
+}
+
+# src/commands/html.sh
+
+function page_add_help {
+  
+  cat <<HELP
+  
+  Create a new html file based on the default or optionally specified template.
+  
+  Usage:
+
+    page add <name> [options]
+
+  Options:
+
+    -t    Specify name of template to use.
+    -h    Display this message and exit.
+
+HELP
+
+template_list page
+}
+
+
+#=============================================================================
+#
+# html Command.
+#
+# Format: page html <name> -t <template>
+#
+function page_cmd_add {
+  
+  page_options "$@"
+  
+  if [[ ${POPTHELP} ]]; then
+    page_add_help
+    exit 0; 
+  fi
+    
+  local fname=$1; shift  # Name of the new file
+  local tmpl='index'    # Default template
+  if [[ ${POPTTMPL} ]]; then 
+    if [[ ! ${TMPLFUNC[page.${POPTTMPL}]} ]]; then
+      echo "ERROR: Unkown template: ${POPTTMPL}"
+      exit 0;
+    fi
+    tmpl=${POPTTMPL}
+  fi
+  unset TMPLDATA; declare -A TMPLDATA=( [title]=$fname )  # unset to prevent old data.
+  ${TMPLFUNC[page.${tmpl}]} "pub/$fname.php" # Execute approprate new command.
+  mkdir part/$fname # Create pages partial directory.
+  generate part.hello part/${fname}/hello.php
+}
+
+
+# src/commands/class.sh
+
+function page_class_help {
+  
+  cat <<HELP
+  
+  Create a new php class based on the default or optionally specified template.
+  
+  Usage:
+
+    page class <name> [options]
+
+  Options:
+
+    -t    Specify name of template to use.
+    -h    Display this message and exit.
+
+HELP
+
+template_list class
+}
+
+#=============================================================================
+#
+# class command
+#
+# Format: page class <name> -t <template>
+#
+function page_cmd_class {
+  
+  page_options "$@"
+  
+  if [[ ${POPTHELP} ]]; then
+    page_class_help
+    exit 0; 
+  fi
+  
+  local fname=$1; shift  # Name of the new file
+  local tmpl='default'    # Default template
+  if [[ ${POPTTMPL} ]]; then 
+    if [[ ! ${TMPLFUNC[class.${POPTTMPL}]} ]]; then
+      echo "ERROR: Unkown template: ${POPTTMPL}"
+      exit 0;
+    fi
+    tmpl=${POPTTMPL}
+  fi
+  
+  if [[ $fname == '' ]]; then
+    echo "No class name specified!"
+    exit 0;
+  fi
+  
+  unset TMPLDATA; declare -A TMPLDATA=( [class_name]=${fname^[a-z]} )  # unset to prevent old data.
+  ${TMPLFUNC[class.${tmpl}]} src/${fname}.php # Execute approprate new command.
+  ${TMPLFUNC[test.${tmpl}]} test/${fname}.php # Execute approprate new command.
+
+}
+
+# src/commands/model.sh
+
+function page_model_help {
+  
+  cat <<HELP
+  
+  Create a new php DAO object.
+  
+  Usage:
+
+    page model <name> [options]
+
+  Options:
+
+    -t    Specify name of template to use.
+    -h    Display this message and exit.
+
+HELP
+
+template_list model
+}
+
+#=============================================================================
+#
+# model command
+#
+# Format: page model <name> -t <template>
+#
+function page_cmd_model {
+  
+  page_options "$@"
+  
+  if [[ ${POPTHELP} ]]; then
+    page_model_help
+    exit 0; 
+  fi
+  
+  local fname=$1; shift  # Name of the new file
+  local tmpl='default'    # Default template
+  if [[ ${POPTTMPL} ]]; then 
+    if [[ ! ${TMPLFUNC[part.${POPTTMPL}]} ]]; then
+      echo "ERROR: Unkown template: ${POPTTMPL}"
+      exit 0;
+    fi
+    tmpl=${POPTTMPL}
+  fi
+  unset TMPLDATA; declare -A TMPLDATA=( [model_name]=${fname^[a-z]} )  # unset to prevent old data.
+  ${TMPLFUNC[model.${tmpl}]} src/${fname}DAO.php # Execute approprate new command.
+
+}
+
+# src/commands/new.sh
+
+function page_new_help {
+  #
+  # 
+  cat <<HELP
+  
+  Create a new project based on the default or optionally specified template.
+  
+  Usage:
+
+    page new <name> [options]
+
+  Options:
+
+    -t    Specify name of project template to use.
+    -h    Display this message and exit.
+
+HELP
+
+  template_list new
+}
+
+
+function page_cmd_new {
+  
+  page_options "$@"
+  
+  if [[ ${POPTHELP} ]]; then
+    page_new_help
+    exit 0; 
+  fi
+  
+  PNAME=$1; shift
+
+  if [[ ${POPTTMPL} ]]; then 
+    if [[ ! ${TMPLFUNC[new.${POPTTMPL}]} ]]; then
+      echo "ERROR: Unkown project type: ${POPTTMPL}"
+      exit 0;
+    fi
+    PTYPE=${POPTTMPL}
+  fi
+  ${TMPLFUNC[new.$PTYPE]} "${name}"   # Execute approprate new command.
+
+}
+
+# src/commands/part.sh
+
+function page_part_help {
+  
+  cat <<HELP
+  
+  Create a new html partial file based on the default or optionally specified template.
+  
+  Usage:
+
+    page part <name> [options]
+
+  Options:
+
+    -t    Specify name of template to use.
+    -h    Display this message and exit.
+
+HELP
+
+template_list part
+}
+
+#=============================================================================
+#
+# part (partials) command
+#
+# Format: page part <name> -t <template>
+#
+function page_cmd_part {
+  
+  page_options "$@"
+  
+  if [[ ${POPTHELP} ]]; then
+    page_part_help
+    exit 0; 
+  fi
+  
+  local fname=$1; shift  # Name of the new file
+  local tmpl='hello'    # Default template
+  if [[ ${POPTTMPL} ]]; then 
+    if [[ ! ${TMPLFUNC[part.${POPTTMPL}]} ]]; then
+      echo "ERROR: Unkown template: ${POPTTMPL}"
+      exit 0;
+    fi
+    tmpl=${POPTTMPL}
+  fi
+  ${TMPLFUNC[part.${tmpl}]} part/${fname}.php # Execute approprate new command.
+
+}
+
+# src/commands/server.sh
+
+function page_server_help {
+  
+  cat <<HELP
+  
+  Run web server
+  
+  Usage:
+
+    page server 
+
+  Options:
+
+  -h    Display this message and exit.
+
+HELP
+
+# template_list test
+}
+
+function page_cmd_server {
+  page_options "$@"
+  
+  if [[ ${POPTHELP} ]]; then
+    page_server_help
+    exit 0; 
+  fi
+  
+  ( sleep 1; open http://localhost:8000 ) &   # delayed subshell
+  page_options "$@"
+  if [[ $POPTROUTER ]]; then
+      printf -- "php -S localhost:8000 -t pub router.php\n"
+      php -S localhost:8000 -t pub router.php
+  else
+      printf -- "php -S localhost:8000 -t pub\n"
+      php -S localhost:8000 -t pub
+  fi
+  
+}
+
+# src/commands/test.sh
+
+function page_test_help {
+  
+  cat <<HELP
+  
+  Run unit tests
+  
+  Usage:
+
+    page test 
+
+  Options:
+
+  -h    Display this message and exit.
+
+HELP
+
+# template_list test
+}
+
+#=============================================================================
+#
+# test command
+#
+# Format: page test
+#
+function page_cmd_test {
+  
+  page_options "$@"
+  
+  if [[ ${POPTHELP} ]]; then
+    page_test_help
+    exit 0; 
+  fi
+  
+  phpunit --bootstrap src/autoload.php test/*.php
+ 
+}
+
+#=============================================================================
+#
+#   Main
+#
+#   Possible enchancements:
+#       - 
+#=============================================================================
+
+#
+# Handle lone -h option and zero argument command.
+# 
+if [[ $1 == "-h" || $# -eq 0 ]]; then page_usage; exit 0; fi
+#
+# Command processing.
+#
+CMD=$1; shift
+case $CMD in
+  
+    new) 
+      page_cmd_new "$@"
+      ;;
+      
+    server) 
+      page_cmd_server "$@"
+      ;;
+        
+    add)
+      page_cmd_add "$@"
+      ;;
+      
+    part) 
+      page_cmd_part "$@"
+      ;;
+      
+    class) 
+      page_cmd_class "$@"
+      ;;
+      
+    test) 
+      page_cmd_test "$@"
+      ;;
+      
+    model) 
+      page_cmd_model "$@"
+      ;;
+      
+    *) printf -- "ERROR: Unknown command $CMD\n"
+      ;;
+esac
+
+
